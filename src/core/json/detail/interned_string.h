@@ -9,7 +9,7 @@
 namespace dfly::detail {
 
 // The interned string has access to a thread local pool of InternedBlobs. It only holds a single
-// pointer into that pool as state. The pool is a node_hash_set so the pointer is stable.
+// pointer into that pool as state. The pool is a flat_hash_set of pointers.
 // InternedString handles incrementing and decrementing reference counts of the blobs tied to its
 // own lifecycle. It deletes the blob from the pool when refcount is 0. The pool is per shard.
 // TODO examine cross shard json object interactions. Can a pool end up access from another shard?
@@ -65,7 +65,7 @@ class InternedString {
  private:
   // If a string exists in pool, increments its refcount and returns a pointer to it. If not, adds
   // the string to the pool.
-  static const InternedBlob* Intern(std::string_view sv);
+  static InternedBlob* Intern(std::string_view sv);
 
   // Increments the refcount if the entry is not null
   void Acquire();
@@ -75,7 +75,7 @@ class InternedString {
 
   static InternedBlobPool& GetPoolRef();
 
-  const InternedBlob* entry_ = nullptr;
+  InternedBlob* entry_ = nullptr;
 };
 
 template <typename Alloc>

@@ -96,19 +96,20 @@ void InternedString::ResetPool() {
   GetPoolRef().clear();
 }
 
-const InternedBlob* InternedString::Intern(const std::string_view sv) {
+InternedBlob* InternedString::Intern(const std::string_view sv) {
   if (sv.empty())
     return nullptr;
 
   auto& pool_ref = GetPoolRef();
-  auto it = pool_ref.find(sv);
-  if (it != pool_ref.end()) {
-    it->IncrRefCount();
-    return &*it;
+  if (auto it = pool_ref.find(sv); it != pool_ref.end()) {
+    InternedBlob* blob = *it;
+    blob->IncrRefCount();
+    return blob;
   }
 
-  auto [new_elem, _] = pool_ref.emplace(sv);
-  return &*new_elem;
+  auto blob = new InternedBlob(sv);
+  auto [new_elem, _] = pool_ref.emplace(blob);
+  return *new_elem;
 }
 
 void InternedString::Acquire() {  // NOLINT
@@ -124,7 +125,8 @@ void InternedString::Release() {
   entry_->DecrRefCount();
 
   if (entry_->RefCount() == 0) {
-    GetPoolRef().erase(*entry_);
+    GetPoolRef().erase(entry_);
+    delete entry_;
     entry_ = nullptr;
   }
 }

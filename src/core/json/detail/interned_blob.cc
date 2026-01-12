@@ -5,18 +5,17 @@
 
 #include <glog/logging.h>
 
-#include <cstring>
-
 #include "core/detail/stateless_allocator.h"
 
 namespace dfly::detail {
+
 InternedBlob::InternedBlob(const std::string_view sv) {
   auto alloc = StatelessAllocator<char>{};
 
   constexpr uint32_t ref_count = 1;
   const uint32_t str_len = sv.size();
 
-  // We need \0 because jsoncons expects c_str() and data() style accessors on keys
+  // We need +1 byte for \0 because jsoncons expects c_str() and data() style accessors on keys
   blob_ = alloc.allocate(kHeaderSize + str_len + 1);
 
   std::memcpy(blob_, &str_len, sizeof(uint32_t));
@@ -62,20 +61,19 @@ uint32_t InternedBlob::RefCount() const {
 
 std::string_view InternedBlob::View() const {
   DCHECK(blob_) << "Called View() on empty blob";
-  return blob_ ? std::string_view{blob_ + kHeaderSize, Size()} : "";
+  return std::string_view{blob_ + kHeaderSize, Size()};
 }
 
 const char* InternedBlob::Data() const {
-  DCHECK(blob_) << "Called Data() on empty blob";
   return blob_ ? blob_ + kHeaderSize : nullptr;
 }
 
-void InternedBlob::IncrRefCount() const {
+void InternedBlob::IncrRefCount() {
   const uint32_t updated_count = RefCount() + 1;
   std::memcpy(blob_ + sizeof(uint32_t), &updated_count, sizeof(updated_count));
 }
 
-void InternedBlob::DecrRefCount() const {
+void InternedBlob::DecrRefCount() {
   // Caller must ensure refcount does not go below 0
   const uint32_t updated_count = RefCount() - 1;
   std::memcpy(blob_ + sizeof(uint32_t), &updated_count, sizeof(updated_count));
@@ -89,24 +87,24 @@ void InternedBlob::Destroy() {
   }
 }
 
-size_t BlobHash::operator()(const InternedBlob& b) const {
-  return std::hash<std::string_view>{}(b.View());
+size_t BlobHash::operator()(const InternedBlob* b) const {
+  return std::hash<std::string_view>{}(b->View());
 }
 
-size_t BlobHash::operator()(const std::string_view& sv) const {
+size_t BlobHash::operator()(std::string_view sv) const {
   return std::hash<std::string_view>{}(sv);
 }
 
-bool BlobEq::operator()(const InternedBlob& a, const InternedBlob& b) const {
-  return a.View() == b.View();
+bool BlobEq::operator()(const InternedBlob* a, const InternedBlob* b) const {
+  return a->View() == b->View();
 }
 
-bool BlobEq::operator()(const InternedBlob& a, std::string_view b) const {
-  return a.View() == b;
+bool BlobEq::operator()(const InternedBlob* a, std::string_view b) const {
+  return a->View() == b;
 }
 
-bool BlobEq::operator()(std::string_view a, const InternedBlob& b) const {
-  return a == b.View();
+bool BlobEq::operator()(std::string_view a, const InternedBlob* b) const {
+  return a == b->View();
 }
 
 }  // namespace dfly::detail
