@@ -3,6 +3,8 @@
 
 #include "core/json/detail/interned_blob.h"
 
+#include <glog/logging.h>
+
 #include <cstring>
 
 #include "core/detail/stateless_allocator.h"
@@ -44,20 +46,14 @@ InternedBlob& InternedBlob::operator=(InternedBlob&& other) noexcept {
 }
 
 uint32_t InternedBlob::Size() const {
-  // TODO - should this check be removed to uncover bugs? or an assert here?
-  if (!blob_)
-    return 0;
-
+  DCHECK(blob_) << "Called Size() on empty blob";
   uint32_t size;
   std::memcpy(&size, blob_, sizeof(size));
   return size;
 }
 
 uint32_t InternedBlob::RefCount() const {
-  // TODO - should this check be removed to uncover bugs? or an assert here?
-  if (!blob_)
-    return 0;
-
+  DCHECK(blob_) << "Called RefCount() on empty blob";
   uint32_t ref_count;
   // Assumes size and refcount are both 4 bytes
   std::memcpy(&ref_count, blob_ + sizeof(uint32_t), sizeof(uint32_t));
@@ -65,10 +61,12 @@ uint32_t InternedBlob::RefCount() const {
 }
 
 std::string_view InternedBlob::View() const {
+  DCHECK(blob_) << "Called View() on empty blob";
   return blob_ ? std::string_view{blob_ + kHeaderSize, Size()} : "";
 }
 
 const char* InternedBlob::Data() const {
+  DCHECK(blob_) << "Called Data() on empty blob";
   return blob_ ? blob_ + kHeaderSize : nullptr;
 }
 
