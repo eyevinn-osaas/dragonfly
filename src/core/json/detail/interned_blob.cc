@@ -25,6 +25,7 @@ InternedBlob::InternedBlob(const std::string_view sv) {
 
   // null terminate so jsoncons can directly access the char* as string
   blob_[kHeaderSize + str_len] = '\0';
+  blob_ += kHeaderSize;
 }
 
 InternedBlob::~InternedBlob() {
@@ -47,7 +48,7 @@ InternedBlob& InternedBlob::operator=(InternedBlob&& other) noexcept {
 uint32_t InternedBlob::Size() const {
   DCHECK(blob_) << "Called Size() on empty blob";
   uint32_t size;
-  std::memcpy(&size, blob_, sizeof(size));
+  std::memcpy(&size, blob_ - kHeaderSize, sizeof(size));
   return size;
 }
 
@@ -55,34 +56,34 @@ uint32_t InternedBlob::RefCount() const {
   DCHECK(blob_) << "Called RefCount() on empty blob";
   uint32_t ref_count;
   // Assumes size and refcount are both 4 bytes
-  std::memcpy(&ref_count, blob_ + sizeof(uint32_t), sizeof(uint32_t));
+  std::memcpy(&ref_count, blob_ - sizeof(uint32_t), sizeof(uint32_t));
   return ref_count;
 }
 
 std::string_view InternedBlob::View() const {
   DCHECK(blob_) << "Called View() on empty blob";
-  return std::string_view{blob_ + kHeaderSize, Size()};
+  return {blob_, Size()};
 }
 
 const char* InternedBlob::Data() const {
-  return blob_ ? blob_ + kHeaderSize : nullptr;
+  return blob_;
 }
 
 void InternedBlob::IncrRefCount() {
   const uint32_t updated_count = RefCount() + 1;
-  std::memcpy(blob_ + sizeof(uint32_t), &updated_count, sizeof(updated_count));
+  std::memcpy(blob_ - sizeof(uint32_t), &updated_count, sizeof(updated_count));
 }
 
 void InternedBlob::DecrRefCount() {
   // Caller must ensure refcount does not go below 0
   const uint32_t updated_count = RefCount() - 1;
-  std::memcpy(blob_ + sizeof(uint32_t), &updated_count, sizeof(updated_count));
+  std::memcpy(blob_ - sizeof(uint32_t), &updated_count, sizeof(updated_count));
 }
 
 void InternedBlob::Destroy() {
   if (blob_) {
     const size_t to_destroy = kHeaderSize + Size() + 1;
-    StatelessAllocator<char>{}.deallocate(blob_, to_destroy);
+    StatelessAllocator<char>{}.deallocate(blob_ - kHeaderSize, to_destroy);
     blob_ = nullptr;
   }
 }

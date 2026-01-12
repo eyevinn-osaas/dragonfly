@@ -37,8 +37,12 @@ class InternedBlob {
  private:
   void Destroy();
 
-  // Layout is: 4 bytes size, 4 bytes refcount, char data, followed by nul-char
-  // nul-char is required because jsoncons attempts to access c_str/data without a size.
+  // Layout is: 4 bytes size, 4 bytes refcount, char data, followed by nul-char.
+  // The trailing nul-char is required because jsoncons needs to access c_str/data without a
+  // size. The blob_ itself points directly to the data, so that callers do not have to perform
+  // pointer arithmetic for c_str() and data() calls:
+  //     [size:4] [refcount:4] [string] [\0]
+  //     ^-8      ^- 4         ^blob_
   char* blob_ = nullptr;
 };
 
