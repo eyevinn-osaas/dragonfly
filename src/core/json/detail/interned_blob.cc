@@ -65,7 +65,7 @@ uint32_t InternedBlob::RefCount() const {
 }
 
 std::string_view InternedBlob::View() const {
-  return {blob_ + kHeaderSize, Size()};
+  return blob_ ? std::string_view{blob_ + kHeaderSize, Size()} : "";
 }
 
 const char* InternedBlob::Data() const {
