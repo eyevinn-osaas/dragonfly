@@ -8,10 +8,9 @@
 
 namespace dfly::detail {
 
-// The interned string has access to a thread local pool of InternedBlobs. It only holds a single
-// pointer into that pool as state. The pool is a flat_hash_set of pointers.
+// The interned string has access to a thread local pool of InternedBlob pointers.
 // InternedString handles incrementing and decrementing reference counts of the blobs tied to its
-// own lifecycle. It deletes the blob from the pool when refcount is 0. The pool is per shard.
+// own lifecycle. It deletes the blob from the pool when refcount is 0.
 // TODO examine cross shard json object interactions. Can a pool end up access from another shard?
 class InternedString {
  public:
@@ -19,13 +18,16 @@ class InternedString {
 
   InternedString();
 
+  explicit InternedString(std::string_view);
+
   // The following constructors and members are added because they are required by jsoncons for
   // keys. Each of these is added in response to compiler errors and should not be removed, even if
   // they are seemingly a no-op or duplicated.
-  template <typename Alloc> explicit InternedString(Alloc /*unused*/) {
-  }
 
-  explicit InternedString(std::string_view);
+  // jsoncons sometimes creates empty obj with custom allocator. If it creates object with any other
+  // allocator, we should fail during compilation.
+  template <typename T> explicit InternedString(StatelessAllocator<T> /*unused*/) {
+  }
 
   template <typename Alloc> InternedString(const char* data, size_t size, Alloc alloc);
 
@@ -61,6 +63,7 @@ class InternedString {
 
   // For tests
   static void ResetPool();
+  static InternedBlobPool& GetPoolRef();
 
  private:
   // If a string exists in pool, increments its refcount and returns a pointer to it. If not, adds
@@ -72,8 +75,6 @@ class InternedString {
 
   // Decrements the refcount, removes entry from pool if necessary, destroying the interned blob
   void Release();
-
-  static InternedBlobPool& GetPoolRef();
 
   InternedBlob* entry_ = nullptr;
 };
