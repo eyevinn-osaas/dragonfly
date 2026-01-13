@@ -136,4 +136,8 @@ InternedBlobPool& InternedString::GetPoolRef() {
   return pool;
 }
 
+size_t InternedString::MemUsed() const {
+  return entry_ ? entry_->MemUsed() : 0;
+}
+
 }  // namespace dfly::detail

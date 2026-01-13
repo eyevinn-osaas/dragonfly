@@ -28,13 +28,19 @@ class InternedBlob {
 
   std::string_view View() const;
 
+  // Returns nul terminated string
   const char* Data() const;
 
+  // Increment ref count, asserts if count grows over type max limit
   void IncrRefCount();
 
+  // Decrement ref count, asserts if count falls below 0
   void DecrRefCount();
 
   void SetRefCount(uint32_t ref_count);
+
+  // Returns bytes used, including string, header and trailing byte
+  size_t MemUsed() const;
 
  private:
   void Destroy();

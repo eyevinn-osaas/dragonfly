@@ -65,6 +65,8 @@ class InternedString {
   static void ResetPool();
   static InternedBlobPool& GetPoolRef();
 
+  size_t MemUsed() const;
+
  private:
   // If a string exists in pool, increments its refcount and returns a pointer to it. If not, adds
   // the string to the pool.

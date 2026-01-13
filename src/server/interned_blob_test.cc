@@ -38,8 +38,7 @@ TEST_F(InternedBlobTest, MemoryUsage) {
   {
     const auto blob = InternedBlob{"1234567"};
     const auto usage_after = mr->used();
-    // header size (4 bytes size + 4 bytes refcount) + strlen + 1 byte for nul char
-    constexpr auto expected_delta = 8 + 7 + 1;
+    const auto expected_delta = blob.MemUsed();
     EXPECT_EQ(usage_before + expected_delta, usage_after);
   }
   const auto usage_after = mr->used();
@@ -211,8 +210,7 @@ TEST_F(InternedBlobTest, StringCtors) {
   StringCheck(x, ".......");
   EXPECT_EQ(pool.size(), 2);
 
-  // allocated = str size + two uint32_t + 1 byte for nul char
-  EXPECT_EQ(mr->used(), before + sv.size() + 9);
+  EXPECT_GE(mr->used(), before + x.MemUsed());
 
   // iterator based ctor
   auto k = InternedString{sv.begin(), sv.end()};

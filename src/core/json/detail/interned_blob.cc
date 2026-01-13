@@ -91,6 +91,10 @@ void InternedBlob::SetRefCount(const uint32_t ref_count) {
   std::memcpy(blob_ - int_size, &ref_count, int_size);
 }
 
+size_t InternedBlob::MemUsed() const {
+  return blob_ ? Size() + kHeaderSize + 1 : 0;
+}
+
 void InternedBlob::Destroy() {
   if (blob_) {
     const size_t to_destroy = kHeaderSize + Size() + 1;
