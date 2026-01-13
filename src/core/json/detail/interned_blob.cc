@@ -7,6 +7,10 @@
 
 #include "core/detail/stateless_allocator.h"
 
+namespace {
+constexpr size_t int_size = sizeof(uint32_t);
+}
+
 namespace dfly::detail {
 
 InternedBlob::InternedBlob(const std::string_view sv) {
@@ -18,8 +22,8 @@ InternedBlob::InternedBlob(const std::string_view sv) {
   // We need +1 byte for \0 because jsoncons expects c_str() and data() style accessors on keys
   blob_ = alloc.allocate(kHeaderSize + str_len + 1);
 
-  std::memcpy(blob_, &str_len, sizeof(uint32_t));
-  std::memcpy(blob_ + sizeof(uint32_t), &ref_count, sizeof(uint32_t));
+  std::memcpy(blob_, &str_len, int_size);
+  std::memcpy(blob_ + int_size, &ref_count, int_size);
 
   std::memcpy(blob_ + kHeaderSize, sv.data(), str_len);
 
@@ -48,7 +52,7 @@ InternedBlob& InternedBlob::operator=(InternedBlob&& other) noexcept {
 uint32_t InternedBlob::Size() const {
   DCHECK(blob_) << "Called Size() on empty blob";
   uint32_t size;
-  std::memcpy(&size, blob_ - kHeaderSize, sizeof(size));
+  std::memcpy(&size, blob_ - kHeaderSize, int_size);
   return size;
 }
 
@@ -56,7 +60,7 @@ uint32_t InternedBlob::RefCount() const {
   DCHECK(blob_) << "Called RefCount() on empty blob";
   uint32_t ref_count;
   // Assumes size and refcount are both 4 bytes
-  std::memcpy(&ref_count, blob_ - sizeof(uint32_t), sizeof(uint32_t));
+  std::memcpy(&ref_count, blob_ - int_size, int_size);
   return ref_count;
 }
 
@@ -70,14 +74,21 @@ const char* InternedBlob::Data() const {
 }
 
 void InternedBlob::IncrRefCount() {
-  const uint32_t updated_count = RefCount() + 1;
-  std::memcpy(blob_ - sizeof(uint32_t), &updated_count, sizeof(updated_count));
+  const uint32_t ref_count = RefCount();
+  DCHECK_LT(ref_count, std::numeric_limits<uint32_t>::max()) << "Attempt to increase max refcount";
+  const uint32_t updated_count = ref_count + 1;
+  std::memcpy(blob_ - int_size, &updated_count, int_size);
 }
 
 void InternedBlob::DecrRefCount() {
-  // Caller must ensure refcount does not go below 0
-  const uint32_t updated_count = RefCount() - 1;
-  std::memcpy(blob_ - sizeof(uint32_t), &updated_count, sizeof(updated_count));
+  const uint32_t ref_count = RefCount();
+  DCHECK_GE(ref_count, 1ul) << "Attempt to decrease zero refcount";
+  const uint32_t updated_count = ref_count - 1;
+  std::memcpy(blob_ - int_size, &updated_count, int_size);
+}
+
+void InternedBlob::SetRefCount(const uint32_t ref_count) {
+  std::memcpy(blob_ - int_size, &ref_count, int_size);
 }
 
 void InternedBlob::Destroy() {

@@ -34,6 +34,8 @@ class InternedBlob {
 
   void DecrRefCount();
 
+  void SetRefCount(uint32_t ref_count);
+
  private:
   void Destroy();
 
