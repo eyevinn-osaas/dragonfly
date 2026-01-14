@@ -107,7 +107,8 @@ InternedBlob* InternedString::Intern(const std::string_view sv) {
     return blob;
   }
 
-  auto blob = new InternedBlob(sv);
+  void* ptr = StatelessAllocator<InternedBlob>{}.allocate(1);
+  auto blob = new (ptr) InternedBlob(sv);
   auto [new_elem, _] = pool_ref.emplace(blob);
   return *new_elem;
 }
@@ -126,7 +127,8 @@ void InternedString::Release() {
 
   if (entry_->RefCount() == 0) {
     GetPoolRef().erase(entry_);
-    delete entry_;
+    entry_->~InternedBlob();
+    StatelessAllocator<InternedBlob>{}.deallocate(entry_, 1);
     entry_ = nullptr;
   }
 }

@@ -7,6 +7,8 @@
 
 #include <string_view>
 
+#include "core/detail/stateless_allocator.h"
+
 namespace dfly::detail {
 class InternedBlob {
   static constexpr auto kHeaderSize = sizeof(uint32_t) * 2;
@@ -70,7 +72,8 @@ struct BlobEq {
 };
 
 // This pool holds blob pointers and is used by InternedString to manage string access.
-using InternedBlobPool = absl::flat_hash_set<InternedBlob*, BlobHash, BlobEq>;
+using InternedBlobPool =
+    absl::flat_hash_set<InternedBlob*, BlobHash, BlobEq, StatelessAllocator<InternedBlob*>>;
 static_assert(sizeof(InternedBlob) == sizeof(char*));
 
 }  // namespace dfly::detail
