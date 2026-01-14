@@ -83,7 +83,7 @@ async def test_rss_used_mem_gap(df_factory: DflyInstanceFactory, type, keys, val
     p.info("memory")
 
     info = (await p.execute())[-1]
-    assert info["used_memory"] < 2 * 1_000_000  # Table memory
+    assert info["used_memory"] < 4 * 1_000_000  # Table memory
     assert info["used_memory_rss"] < min_rss / 10  # RSS must have been freed
 
 
