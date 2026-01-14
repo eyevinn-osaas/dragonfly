@@ -75,14 +75,14 @@ const char* InternedBlob::Data() const {
 
 void InternedBlob::IncrRefCount() {
   const uint32_t ref_count = RefCount();
-  DCHECK_LT(ref_count, std::numeric_limits<uint32_t>::max()) << "Attempt to increase max refcount";
+  CHECK_LT(ref_count, std::numeric_limits<uint32_t>::max()) << "Attempt to increase max refcount";
   const uint32_t updated_count = ref_count + 1;
   std::memcpy(blob_ - int_size, &updated_count, int_size);
 }
 
 void InternedBlob::DecrRefCount() {
   const uint32_t ref_count = RefCount();
-  DCHECK_GE(ref_count, 1ul) << "Attempt to decrease zero refcount";
+  CHECK_GE(ref_count, 1ul) << "Attempt to decrease zero refcount";
   const uint32_t updated_count = ref_count - 1;
   std::memcpy(blob_ - int_size, &updated_count, int_size);
 }
