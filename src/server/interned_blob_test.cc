@@ -26,7 +26,7 @@ class InternedBlobTest : public testing::Test {
   }
 
   void TearDown() override {
-    InitTLStatelessAllocMR(nullptr);
+    CleanupStatelessAllocMR();
   }
 };
 

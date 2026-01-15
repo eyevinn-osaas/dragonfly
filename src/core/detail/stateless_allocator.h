@@ -4,6 +4,7 @@
 #pragma once
 
 #include <cassert>
+#include <functional>
 
 #include "base/pmr/memory_resource.h"
 
@@ -11,7 +12,8 @@ namespace dfly {
 
 namespace detail {
 inline thread_local PMR_NS::memory_resource* tl_mr = nullptr;
-}
+inline thread_local std::vector<std::function<void()>> cleanup_queue{};
+}  // namespace detail
 
 template <typename T, typename Impl> class StatelessAllocatorBase {
  public:
@@ -65,6 +67,17 @@ bool operator!=(const StatelessAllocator<T>&, const StatelessAllocator<U>&) noex
 
 inline void InitTLStatelessAllocMR(PMR_NS::memory_resource* mr) {
   detail::tl_mr = mr;
+}
+
+inline void CleanupStatelessAllocMR() {
+  for (auto it = detail::cleanup_queue.rbegin(); it != detail::cleanup_queue.rend(); ++it) {
+    (*it)();
+  }
+  detail::tl_mr = nullptr;
+}
+
+inline void EnqueueCleanup(std::function<void()> f) {
+  detail::cleanup_queue.emplace_back(std::move(f));
 }
 
 }  // namespace dfly
