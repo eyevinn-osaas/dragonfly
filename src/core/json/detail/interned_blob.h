@@ -71,9 +71,14 @@ struct BlobEq {
   bool operator()(std::string_view a, const InternedBlob* b) const;
 };
 
-// This pool holds blob pointers and is used by InternedString to manage string access.
-using InternedBlobPool =
-    absl::flat_hash_set<InternedBlob*, BlobHash, BlobEq, StatelessAllocator<InternedBlob*>>;
+// This pool holds blob pointers and is used by InternedString to manage string access. It would be
+// nice to keep this on the mimalloc heap by using StatelessAllocator. However, JSON size is
+// estimated by comparing mimalloc usage before and after creating an object. If we keep this pool
+// on mimalloc, it can introduce variations such as resizing of its internal store when adding a new
+// object. This results in non-deterministic memory usage, which introduces incorrectness in tests
+// and the memory usage command. To keep memory estimation per object accurate, the pool is
+// allocated on the default heap.
+using InternedBlobPool = absl::flat_hash_set<InternedBlob*, BlobHash, BlobEq>;
 static_assert(sizeof(InternedBlob) == sizeof(char*));
 
 }  // namespace dfly::detail

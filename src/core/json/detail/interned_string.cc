@@ -134,12 +134,8 @@ void InternedString::Release() {
 }
 
 InternedBlobPool& InternedString::GetPoolRef() {
-  thread_local std::optional<InternedBlobPool> pool;
-  if (ABSL_PREDICT_FALSE(!pool)) {
-    pool.emplace();
-    EnqueueCleanup([] { pool.reset(); });
-  }
-  return *pool;
+  thread_local InternedBlobPool pool;
+  return pool;
 }
 
 size_t InternedString::MemUsed() const {

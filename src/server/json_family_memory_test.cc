@@ -166,10 +166,9 @@ TEST_F(JsonFamilyMemoryTest, SimpleDel) {
   /* We still expect the initial size here, because after deletion we do not call shrink_to_fit on
      the JSON object. As a result, the memory will not be deallocated. Check
      JsonFamilyMemoryTest::JsonConsDelTest for example. */
-  // When deleting, json object member is erased. This causes deletion of two interned string
-  // wrappers, which has to be accounted for.
-  const size_t size_after_delete =
-      start_size - sizeof(detail::InternedBlob) - sizeof(detail::InternedString);
+  // When deleting, json object member is erased. This causes deletion of the blob and the data it
+  // contained.
+  const size_t size_after_delete = start_size - sizeof(detail::InternedBlob) - 16;
   EXPECT_THAT(resp, IntArg(size_after_delete));
 
   // Again set start json
