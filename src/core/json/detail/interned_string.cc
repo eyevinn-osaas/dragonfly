@@ -93,7 +93,13 @@ void InternedString::shrink_to_fit() {  // NOLINT (must be non-const to align wi
 }
 
 void InternedString::ResetPool() {
-  GetPoolRef().clear();
+  InternedBlobPool& pool = GetPoolRef();
+  StatelessAllocator<InternedBlob> alloc;
+  for (InternedBlob* blob : pool) {
+    blob->~InternedBlob();
+    alloc.deallocate(blob, 1);
+  }
+  pool.clear();
 }
 
 InternedBlob* InternedString::Intern(const std::string_view sv) {
