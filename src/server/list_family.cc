@@ -2,6 +2,7 @@
 // See LICENSE for licensing terms.
 //
 extern "C" {
+#include "redis/listpack.h"
 #include "redis/sds.h"
 }
 
@@ -63,77 +64,100 @@ ABSL_FLAG(int32_t, list_compress_depth, 0, "Compress depth of the list. Default 
 namespace dfly {
 
 using namespace std;
+
 using namespace facade;
 using absl::GetFlag;
 using time_point = Transaction::time_point;
 
 namespace {
 
-struct ListWrapper {
-  unsigned encoding = 0;
-  union {
-    QList* ql = nullptr;
-    uint8_t* listpack;
-  };
+class ListPack {
+ public:
+  explicit ListPack(uint8_t* lp) : lp_(lp) {
+  }
 
   size_t Size() const {
-    return ql->Size();
+    return lpLength(lp_);
   }
 
-  auto Pop(QList::Where where) {
-    return ql->Pop(where);
-  }
-
-  void Push(string_view value, QList::Where where) {
-    ql->Push(value, where);
-  }
-
-  string First(QList::Where where) const {
-    auto it = ql->GetIterator(where);
-    CHECK(it.Next());
-    return it.Get().to_string();
-  }
-
-  std::optional<string> At(long index) const {
-    auto it = ql->GetIterator(index);
-    if (!it.Next())
-      return nullopt;
-    return it.Get().to_string();
-  }
-
-  vector<uint32_t> Pos(string_view element, int rank, uint32_t count, uint32_t max_len,
+  string Pop(QList::Where where);
+  void Push(string_view value, QList::Where where);
+  string First(QList::Where where) const;
+  std::optional<string> At(long index) const;
+  vector<uint32_t> Pos(string_view element, uint32_t rank, uint32_t count, uint32_t max_len,
                        QList::Where where) const;
-
-  bool Insert(string_view pivot, string_view elem, QList::InsertOpt insert_opt) {
-    return ql->Insert(pivot, elem, insert_opt);
-  }
-
+  bool Insert(string_view pivot, string_view elem, QList::InsertOpt insert_opt);
   unsigned Remove(string_view elem, unsigned count, QList::Where where);
-
-  bool Replace(long index, string_view elem) {
-    return ql->Replace(index, elem);
-  }
+  bool Replace(long index, string_view elem);
 
   void Erase(long start, long count) {
-    ql->Erase(start, count);
+    lp_ = lpDeleteRange(lp_, start, count);
   }
+
+  uint8_t* GetPointer() const {
+    return lp_;
+  }
+
+ private:
+  static QList::Entry GetEntry(uint8_t* pos);
+  uint8_t* GetFirst(QList::Where where) const {
+    return (where == QList::HEAD) ? lpFirst(lp_) : lpLast(lp_);
+  }
+
+  mutable uint8_t* lp_;
 };
 
-ListWrapper GetLW(const PrimeValue& mv) {
-  return ListWrapper{.encoding = mv.Encoding(), .ql = static_cast<QList*>(mv.RObjPtr())};
+QList::Entry ListPack::GetEntry(uint8_t* pos) {
+  unsigned int slen;
+  long long lval;
+  uint8_t* vstr = lpGetValue(pos, &slen, &lval);
+  return vstr ? QList::Entry(reinterpret_cast<char*>(vstr), slen) : QList::Entry(lval);
 }
 
-vector<uint32_t> ListWrapper::Pos(string_view element, int rank, uint32_t count, uint32_t max_len,
-                                  QList::Where where) const {
-  DCHECK_GT(rank, 0);
+string ListPack::Pop(QList::Where where) {
+  uint8_t* pos = GetFirst(where);
+  CHECK(pos);
+
+  string res = GetEntry(pos).to_string();
+  lp_ = lpDelete(lp_, pos, nullptr);
+  return res;
+}
+
+void ListPack::Push(string_view value, QList::Where where) {
+  if (where == QList::HEAD) {
+    lp_ = lpPrepend(lp_, (unsigned char*)value.data(), value.size());
+  } else {
+    lp_ = lpAppend(lp_, (unsigned char*)value.data(), value.size());
+  }
+}
+
+string ListPack::First(QList::Where where) const {
+  uint8_t* pos = GetFirst(where);
+  CHECK(pos);
+
+  return GetEntry(pos).to_string();
+}
+
+std::optional<string> ListPack::At(long index) const {
+  uint8_t* pos = lpSeek(lp_, index);
+  if (!pos)
+    return nullopt;
+
+  return GetEntry(pos).to_string();
+}
+
+vector<uint32_t> ListPack::Pos(string_view element, uint32_t rank, uint32_t count, uint32_t max_len,
+                               QList::Where where) const {
+  DCHECK_GT(rank, 0u);
   vector<uint32_t> matches;
 
-  auto it = ql->GetIterator(where);
+  uint8_t* p = GetFirst(where);
   unsigned index = 0;
-  while (it.Next() && (max_len == 0 || index < max_len)) {
-    if (it.Get() == element) {
+  while (p && (max_len == 0 || index < max_len)) {
+    if (GetEntry(p) == element) {
       if (rank == 1) {
-        auto k = (where == QList::HEAD) ? index : ql->Size() - index - 1;
+        size_t sz = lpLength(lp_);
+        auto k = (where == QList::HEAD) ? index : sz - index - 1;
         matches.push_back(k);
         if (count && matches.size() >= count)
           break;
@@ -142,8 +166,183 @@ vector<uint32_t> ListWrapper::Pos(string_view element, int rank, uint32_t count,
       }
     }
     index++;
+    p = (where == QList::HEAD) ? lpNext(lp_, p) : lpPrev(lp_, p);
   }
   return matches;
+}
+
+bool ListPack::Insert(string_view pivot, string_view elem, QList::InsertOpt insert_opt) {
+  uint8_t* p = lpFirst(lp_);
+  while (p) {
+    if (GetEntry(p) == pivot) {
+      int where = (insert_opt == QList::BEFORE) ? LP_BEFORE : LP_AFTER;
+      lp_ = lpInsertString(lp_, (unsigned char*)elem.data(), elem.size(), p, where, nullptr);
+      return true;
+    }
+    p = lpNext(lp_, p);
+  }
+  return false;
+}
+
+unsigned ListPack::Remove(string_view elem, unsigned count, QList::Where where) {
+  unsigned removed = 0;
+  int64_t ival;
+
+  // try parsing the element into an integer.
+  int is_int = lpStringToInt64(elem.data(), elem.size(), &ival);
+
+  auto is_match = [&](const QList::Entry& entry) {
+    return is_int ? entry.is_int() && entry.ival() == ival : entry == elem;
+  };
+
+  uint8_t* p = GetFirst(where);
+  while (p) {
+    if (is_match(GetEntry(p))) {
+      if (where == QList::HEAD) {
+        lp_ = lpDelete(lp_, p, &p);
+      } else {
+        uint8_t* prev = lpPrev(lp_, p);
+        ptrdiff_t offset = prev ? (prev - lp_) : -1;
+        lp_ = lpDelete(lp_, p, nullptr);
+        p = (offset != -1) ? (lp_ + offset) : nullptr;
+      }
+
+      removed++;
+      if (count && removed == count)
+        break;
+      continue;
+    }
+
+    p = (where == QList::HEAD) ? lpNext(lp_, p) : lpPrev(lp_, p);
+  }
+
+  return removed;
+}
+
+bool ListPack::Replace(long index, string_view elem) {
+  uint8_t* p = lpSeek(lp_, index);
+  if (!p)
+    return false;
+
+  unsigned char* new_elem_ptr = nullptr;
+  lp_ = lpInsertString(lp_, (unsigned char*)elem.data(), elem.size(), p, LP_BEFORE, &new_elem_ptr);
+
+  uint8_t* p_new = lpNext(lp_, new_elem_ptr);
+  CHECK(p_new);
+  lp_ = lpDelete(lp_, p_new, nullptr);
+  return true;
+}
+
+struct ListWrapper {
+  std::variant<QList*, ListPack> list;
+
+  size_t Size() const {
+    if (auto* ql = std::get_if<QList*>(&list)) {
+      return (*ql)->Size();
+    }
+    return std::get<ListPack>(list).Size();
+  }
+
+  string Pop(QList::Where where) {
+    if (auto* ql = std::get_if<QList*>(&list)) {
+      return (*ql)->Pop(where);
+    }
+    return std::get<ListPack>(list).Pop(where);
+  }
+
+  void Push(string_view value, QList::Where where) {
+    if (auto* ql = std::get_if<QList*>(&list)) {
+      (*ql)->Push(value, where);
+      return;
+    }
+    std::get<ListPack>(list).Push(value, where);
+  }
+
+  string First(QList::Where where) const {
+    if (auto* ql = std::get_if<QList*>(&list)) {
+      auto it = (*ql)->GetIterator(where);
+      CHECK(it.Next());
+      return it.Get().to_string();
+    }
+    return std::get<ListPack>(list).First(where);
+  }
+
+  std::optional<string> At(long index) const {
+    if (auto* ql = std::get_if<QList*>(&list)) {
+      auto it = (*ql)->GetIterator(index);
+      if (!it.Next())
+        return nullopt;
+      return it.Get().to_string();
+    }
+    return std::get<ListPack>(list).At(index);
+  }
+
+  vector<uint32_t> Pos(string_view element, uint32_t rank, uint32_t count, uint32_t max_len,
+                       QList::Where where) const;
+
+  bool Insert(string_view pivot, string_view elem, QList::InsertOpt insert_opt) {
+    if (auto* ql = std::get_if<QList*>(&list)) {
+      return (*ql)->Insert(pivot, elem, insert_opt);
+    }
+    return std::get<ListPack>(list).Insert(pivot, elem, insert_opt);
+  }
+
+  unsigned Remove(string_view elem, unsigned count, QList::Where where);
+
+  bool Replace(long index, string_view elem) {
+    if (auto* ql = std::get_if<QList*>(&list)) {
+      return (*ql)->Replace(index, elem);
+    }
+    return std::get<ListPack>(list).Replace(index, elem);
+  }
+
+  void Erase(long start, long count) {
+    if (auto* ql = std::get_if<QList*>(&list)) {
+      (*ql)->Erase(start, count);
+      return;
+    }
+    std::get<ListPack>(list).Erase(start, count);
+  }
+};
+
+ListWrapper GetLW(const PrimeValue& mv) {
+  if (mv.Encoding() == kEncodingQL2) {
+    return ListWrapper{static_cast<QList*>(mv.RObjPtr())};
+  }
+  return ListWrapper{ListPack(static_cast<uint8_t*>(mv.RObjPtr()))};
+}
+
+void UpdateListpack(PrimeValue& pv, const ListWrapper& lw) {
+  if (auto* lp = std::get_if<ListPack>(&lw.list)) {
+    pv.SetRObjPtr(lp->GetPointer());
+  }
+}
+
+vector<uint32_t> ListWrapper::Pos(string_view element, uint32_t rank, uint32_t count,
+                                  uint32_t max_len, QList::Where where) const {
+  DCHECK_GT(rank, 0u);
+  vector<uint32_t> matches;
+
+  if (auto* ql = std::get_if<QList*>(&list)) {
+    auto it = (*ql)->GetIterator(where);
+    unsigned index = 0;
+    while (it.Next() && (max_len == 0 || index < max_len)) {
+      if (it.Get() == element) {
+        if (rank == 1) {
+          auto k = (where == QList::HEAD) ? index : (*ql)->Size() - index - 1;
+          matches.push_back(k);
+          if (count && matches.size() >= count)
+            break;
+        } else {
+          rank--;
+        }
+      }
+      index++;
+    }
+    return matches;
+  }
+
+  return std::get<ListPack>(list).Pos(element, rank, count, max_len, where);
 }
 
 unsigned ListWrapper::Remove(string_view elem, unsigned count, QList::Where where) {
@@ -153,22 +352,25 @@ unsigned ListWrapper::Remove(string_view elem, unsigned count, QList::Where wher
   // try parsing the element into an integer.
   int is_int = lpStringToInt64(elem.data(), elem.size(), &ival);
 
-  auto it = ql->GetIterator(where);
-  auto is_match = [&](const QList::Entry& entry) {
-    return is_int ? entry.is_int() && entry.ival() == ival : entry == elem;
-  };
+  if (auto* ql = std::get_if<QList*>(&list)) {
+    auto it = (*ql)->GetIterator(where);
+    auto is_match = [&](const QList::Entry& entry) {
+      return is_int ? entry.is_int() && entry.ival() == ival : entry == elem;
+    };
 
-  while (it.Next()) {
-    QList::Entry entry = it.Get();
-    if (is_match(entry)) {
-      it = ql->Erase(it);
-      removed++;
-      if (count && removed == count)
-        break;
+    while (it.Next()) {
+      QList::Entry entry = it.Get();
+      if (is_match(entry)) {
+        it = (*ql)->Erase(it);
+        removed++;
+        if (count && removed == count)
+          break;
+      }
     }
+    return removed;
   }
 
-  return removed;
+  return std::get<ListPack>(list).Remove(elem, count, where);
 }
 
 enum class ListDir : uint8_t { LEFT, RIGHT };
@@ -213,6 +415,7 @@ std::string OpBPop(Transaction* t, EngineShard* shard, std::string_view key, Lis
   ListWrapper lw = GetLW(it->second);
   QList::Where where = ToWhere(dir);
   value = lw.Pop(where);
+  UpdateListpack(it->second, lw);
   len = lw.Size();
 
   it_res->post_updater.Run();
@@ -231,23 +434,23 @@ std::string OpBPop(Transaction* t, EngineShard* shard, std::string_view key, Lis
   return value;
 }
 
-QList* CreateOrGet(const OpArgs& op_args, string_view key, bool create, PrimeValue* pv) {
-  QList* res = nullptr;
-
+ListWrapper CreateOrGet(const OpArgs& op_args, string_view key, bool create, PrimeValue* pv) {
   if (create) {
-    res = CompactObj::AllocateMR<QList>(GetFlag(FLAGS_list_max_listpack_size),
-                                        GetFlag(FLAGS_list_compress_depth));
-    pv->InitRobj(OBJ_LIST, kEncodingQL2, res);
+    // res = CompactObj::AllocateMR<QList>(GetFlag(FLAGS_list_max_listpack_size),
+    //                                     GetFlag(FLAGS_list_compress_depth));
+    // pv->InitRobj(OBJ_LIST, kEncodingQL2, res);
+
+    uint8_t* lp = lpNew(0);
+    pv->InitRobj(OBJ_LIST, kEncodingListPack, lp);
+
     auto blocking_controller = op_args.db_cntx.ns->GetBlockingController(op_args.shard->shard_id());
     if (blocking_controller) {
       blocking_controller->Awaken(op_args.db_cntx.db_index, key);
     }
-  } else {
-    DCHECK(pv->ObjType() == OBJ_LIST && pv->Encoding() == kEncodingQL2);
-    res = GetLW(*pv).ql;
+    return ListWrapper{ListPack(lp)};
   }
 
-  return res;
+  return GetLW(*pv);
 }
 
 OpResult<string> OpMoveSingleShard(const OpArgs& op_args, string_view src, string_view dest,
@@ -262,13 +465,13 @@ OpResult<string> OpMoveSingleShard(const OpArgs& op_args, string_view src, strin
   string val;
   size_t prev_len = 0;
 
-  DCHECK_EQ(src_it->second.Encoding(), kEncodingQL2);
   srcql_v2 = GetLW(src_it->second);
   prev_len = srcql_v2.Size();
 
   if (src == dest) {  // simple case.
     val = srcql_v2.Pop(ToWhere(src_dir));
     srcql_v2.Push(val, ToWhere(dest_dir));
+    UpdateListpack(src_it->second, srcql_v2);
     return val;
   }
 
@@ -282,10 +485,12 @@ OpResult<string> OpMoveSingleShard(const OpArgs& op_args, string_view src, strin
   src_res = db_slice.FindMutable(op_args.db_cntx, src, OBJ_LIST);
   src_it = src_res->it;
 
-  QList* destql_v2 = CreateOrGet(op_args, dest, dest_res.is_new, &dest_res.it->second);
+  ListWrapper dest_lw = CreateOrGet(op_args, dest, dest_res.is_new, &dest_res.it->second);
 
   val = srcql_v2.Pop(ToWhere(src_dir));
-  destql_v2->Push(val, ToWhere(dest_dir));
+  UpdateListpack(src_it->second, srcql_v2);
+  dest_lw.Push(val, ToWhere(dest_dir));
+  UpdateListpack(dest_res.it->second, dest_lw);
 
   src_res->post_updater.Run();
   dest_res.post_updater.Run();
@@ -333,13 +538,14 @@ OpResult<uint32_t> OpPush(const OpArgs& op_args, std::string_view key, ListDir d
 
   size_t len = 0;
   DVLOG(1) << "OpPush " << key << " new_key " << res.is_new;
-  QList* ql_v2 = CreateOrGet(op_args, key, res.is_new, &res.it->second);
+  ListWrapper lw = CreateOrGet(op_args, key, res.is_new, &res.it->second);
 
   QList::Where where = ToWhere(dir);
   for (string_view v : vals) {
-    ql_v2->Push(v, where);
+    lw.Push(v, where);
   }
-  len = ql_v2->Size();
+  UpdateListpack(res.it->second, lw);
+  len = lw.Size();
 
   if (journal_rewrite && op_args.shard->journal()) {
     string command = dir == ListDir::LEFT ? "LPUSH" : "RPUSH";
@@ -384,6 +590,7 @@ OpResult<StringVec> OpPop(const OpArgs& op_args, string_view key, ListDir dir, u
       res.push_back(std::move(val));
     }
   }
+  UpdateListpack(it->second, lw);
 
   it_res->post_updater.Run();
 
@@ -520,6 +727,7 @@ OpResult<int> OpInsert(const OpArgs& op_args, string_view key, string_view pivot
   int res = -1;
 
   if (lw.Insert(pivot, elem, insert_opt)) {
+    UpdateListpack(it_res->it->second, lw);
     res = int(lw.Size());
   }
 
@@ -541,6 +749,7 @@ OpResult<uint32_t> OpRem(const OpArgs& op_args, string_view key, string_view ele
   }
 
   unsigned removed = lw.Remove(elem, count, where);
+  UpdateListpack(it_res->it->second, lw);
   size_t len = lw.Size();
 
   it_res->post_updater.Run();
@@ -560,8 +769,10 @@ OpStatus OpSet(const OpArgs& op_args, string_view key, string_view elem, long in
 
   ListWrapper lw = GetLW(it_res->it->second);
   OpStatus status = OpStatus::OUT_OF_RANGE;
-  if (lw.Replace(index, elem))
+  if (lw.Replace(index, elem)) {
+    UpdateListpack(it_res->it->second, lw);
     status = OpStatus::OK;
+  }
   return status;
 }
 
@@ -601,6 +812,7 @@ OpStatus OpTrim(const OpArgs& op_args, string_view key, long start, long end) {
   ListWrapper lw = GetLW(it->second);
   lw.Erase(0, ltrim);
   lw.Erase(-rtrim, rtrim);
+  UpdateListpack(it->second, lw);
 
   it_res->post_updater.Run();
 
